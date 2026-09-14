@@ -1,0 +1,236 @@
+name: Build macOS Executable
+
+on:
+  push:
+    branches: [ main, develop ]
+    tags:
+      - 'v*'
+  pull_request:
+    branches: [ main ]
+  workflow_dispatch:
+
+jobs:
+  build:
+    name: Build macOS Executable
+    runs-on: macos-latest
+    
+    strategy:
+      matrix:
+        python-version: ['3.11']
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+    
+    - name: Set up Python ${{ matrix.python-version }}
+      uses: actions/setup-python@v4
+      with:
+        python-version: ${{ matrix.python-version }}
+        cache: 'pip'
+    
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install -r requirements.txt
+        pip install PyInstaller==6.1.0
+    
+    - name: Build macOS executable
+      run: |
+        pyinstaller \
+          --onefile \
+          --windowed \
+          --name apk-decompiler \
+          --osx-bundle-identifier com.apkdecompiler.app \
+          --distpath ./dist \
+          --buildpath ./build_temp \
+          --specpath ./specs \
+          --hidden-import=androguard \
+          --hidden-import=androguard.core \
+          --hidden-import=androguard.core.dex \
+          --hidden-import=androguard.core.apk \
+          --hidden-import=androguard.decompiler \
+          --hidden-import=androguard.decompiler.decompiler \
+          --hidden-import=colorama \
+          --hidden-import=tqdm \
+          --hidden-import=pycparser \
+          --collect-all androguard \
+          apk_decompiler.py
+    
+    - name: Make executable and verify
+      run: |
+        chmod +x dist/apk-decompiler
+        dist/apk-decompiler -h
+    
+    - name: Get version info
+      id: version
+      run: |
+        echo "date=$(date +'%Y%m%d')" >> $GITHUB_OUTPUT
+        echo "time=$(date +'%H%M%S')" >> $GITHUB_OUTPUT
+    
+    - name: Create distribution package
+      run: |
+        cd dist
+        zip -r apk-decompiler-macos-${{ steps.version.outputs.date }}.zip apk-decompiler
+        tar -czf apk-decompiler-macos-${{ steps.version.outputs.date }}.tar.gz apk-decompiler
+        cd ..
+    
+    - name: Create release notes
+      run: |
+        cat > dist/RELEASE_NOTES.md << 'EOF'
+        # APK Decompiler for macOS
+        
+        ## What's Included
+        
+        - **apk-decompiler** - Standalone executable (no Python needed!)
+        - Complete APK decompilation functionality
+        - Works on Intel and Apple Silicon Macs
+        
+        ## Quick Start
+        
+        ```bash
+        # Make executable
+        chmod +x apk-decompiler
+        
+        # Run decompiler
+        ./apk-decompiler your_app.apk
+        ```
+        
+        ## Installation
+        
+        ### Option 1: Use immediately
+        ```bash
+        chmod +x apk-decompiler
+        ./apk-decompiler app.apk
+        ```
+        
+        ### Option 2: Copy to Applications
+        ```bash
+        cp apk-decompiler /Applications/
+        chmod +x /Applications/apk-decompiler
+        /Applications/apk-decompiler app.apk
+        ```
+        
+        ### Option 3: Add to PATH
+        ```bash
+        cp apk-decompiler /usr/local/bin/
+        chmod +x /usr/local/bin/apk-decompiler
+        apk-decompiler app.apk
+        ```
+        
+        ## Usage
+        
+        ```bash
+        # Basic decompilation
+        ./apk-decompiler your_app.apk
+        
+        # Custom output directory
+        ./apk-decompiler your_app.apk -o ~/decompiled
+        
+        # Verbose mode
+        ./apk-decompiler your_app.apk -v
+        
+        # Show help
+        ./apk-decompiler -h
+        ```
+        
+        ## Output Structure
+        
+        ```
+        decompiled_app_<timestamp>/
+        ├── java_source/       # Decompiled Java code
+        ├── manifest/          # AndroidManifest.xml
+        ├── resources/         # App resources
+        ├── dex/               # DEX files
+        ├── analysis/          # Analysis reports
+        ├── raw_apk/           # Complete extracted APK
+        └── SUMMARY.json       # Decompilation summary
+        ```
+        
+        ## Features
+        
+        ✓ Full APK decompilation
+        ✓ DEX to Java conversion
+        ✓ AndroidManifest.xml extraction
+        ✓ Resource extraction
+        ✓ Multi-DEX support
+        ✓ Code analysis
+        ✓ Standalone - no dependencies!
+        
+        ## System Requirements
+        
+        - macOS 10.13 or later
+        - Intel or Apple Silicon (M1/M2/M3)
+        - 2GB+ RAM
+        - 500MB+ disk space
+        
+        ## Support
+        
+        See the full documentation at:
+        https://github.com/gxchyy-commits/apk-decompiler
+        EOF
+    
+    - name: Upload artifact (executable)
+      uses: actions/upload-artifact@v3
+      with:
+        name: apk-decompiler-macos-executable
+        path: dist/apk-decompiler
+        retention-days: 90
+    
+    - name: Upload artifact (ZIP)
+      uses: actions/upload-artifact@v3
+      with:
+        name: apk-decompiler-macos-zip
+        path: dist/apk-decompiler-macos-*.zip
+        retention-days: 90
+    
+    - name: Upload artifact (TAR.GZ)
+      uses: actions/upload-artifact@v3
+      with:
+        name: apk-decompiler-macos-targz
+        path: dist/apk-decompiler-macos-*.tar.gz
+        retention-days: 90
+    
+    - name: Create GitHub Release
+      if: startsWith(github.ref, 'refs/tags/')
+      uses: softprops/action-gh-release@v1
+      with:
+        files: |
+          dist/apk-decompiler
+          dist/apk-decompiler-macos-*.zip
+          dist/apk-decompiler-macos-*.tar.gz
+          dist/RELEASE_NOTES.md
+        body_path: dist/RELEASE_NOTES.md
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+    
+    - name: Clean up
+      if: always()
+      run: |
+        rm -rf build_temp specs
+
+  build-result:
+    name: Build Result Summary
+    runs-on: ubuntu-latest
+    needs: build
+    if: always()
+    
+    steps:
+    - name: Download artifacts
+      uses: actions/download-artifact@v3
+    
+    - name: Print summary
+      run: |
+        echo "╔════════════════════════════════════════════════════════════╗"
+        echo "║          macOS Executable Build Complete! ✓                 ║"
+        echo "╚════════════════════════════════════════════════════════════╝"
+        echo ""
+        echo "📦 Artifacts available for download:"
+        echo ""
+        ls -lh apk-decompiler-macos-* 2>/dev/null || echo "No packages found"
+        echo ""
+        echo "🎯 Next steps:"
+        echo "1. Download the executable from the artifacts section"
+        echo "2. Make it executable: chmod +x apk-decompiler"
+        echo "3. Run it: ./apk-decompiler your_app.apk"
+        echo ""
+        echo "📖 For detailed instructions, see RELEASE_NOTES.md"
